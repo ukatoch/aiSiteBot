@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+langchain
+langchain-community
+langchain-openai
+langchain-ollama
+chromadb
+pypdf
+beautifulsoup4
+python-multipart
+httpx
+tiktoken
