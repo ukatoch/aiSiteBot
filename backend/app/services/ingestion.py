@@ -14,7 +14,7 @@ class IngestionService:
             separators=["\n\n", "\n", " ", ""]
         )
 
-    async def ingest_url(self, url: str):
+    async def ingest_url(self, url: str, bot_id: str):
         """Scrapes content from a URL."""
         try:
             response = requests.get(url)
@@ -27,18 +27,18 @@ class IngestionService:
             if not text:
                 return []
 
-            doc = Document(page_content=text, metadata={"source": url, "type": "url"})
+            doc = Document(page_content=text, metadata={"source": url, "type": "url", "botId": bot_id})
             return self.text_splitter.split_documents([doc])
         except Exception as e:
             print(f"Error ingesting URL {url}: {e}")
             raise e
 
-    async def ingest_text(self, text: str, source_name: str = "text_input"):
+    async def ingest_text(self, text: str, bot_id: str, source_name: str = "text_input"):
         """Ingests raw text."""
-        doc = Document(page_content=text, metadata={"source": source_name, "type": "text"})
+        doc = Document(page_content=text, metadata={"source": source_name, "type": "text", "botId": bot_id})
         return self.text_splitter.split_documents([doc])
 
-    async def ingest_pdf(self, file_content: bytes, filename: str):
+    async def ingest_pdf(self, file_content: bytes, filename: str, bot_id: str):
         """Ingests a PDF file."""
         # Save bytes to a temp file because PyPDFLoader expects a path
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -53,6 +53,7 @@ class IngestionService:
             for doc in documents:
                 doc.metadata["source"] = filename
                 doc.metadata["type"] = "pdf"
+                doc.metadata["botId"] = bot_id
             
             return self.text_splitter.split_documents(documents)
         finally:

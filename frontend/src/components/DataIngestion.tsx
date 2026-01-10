@@ -1,46 +1,98 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
-import { Upload, Globe, Loader2, CheckCircle, AlertCircle, FileText, Plus, Database } from 'lucide-react';
+import { Upload, Globe, Loader2, CheckCircle, AlertCircle, FileText, Database } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
 
 interface DataIngestionProps {
     onIngestSuccess: () => void;
+    botId?: string;
+    hostname?: string;
+    showSourcesList?: boolean;
 }
 
-const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
+const DataIngestion: React.FC<DataIngestionProps> = ({
+    onIngestSuccess,
+    botId = 'bot-default',
+    hostname = window.location.hostname,
+    showSourcesList = true
+}) => {
     const [url, setUrl] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-    const [documents, setDocuments] = useState<{ source: string; type: string }[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const fetchDocuments = async () => {
-        try {
-            const response = await axios.get('http://localhost:8000/api/v1/documents');
-            setDocuments(response.data.documents);
-        } catch (error) {
-            console.error('Failed to fetch documents:', error);
-        }
-    };
 
+
+    // Clear status after a delay (longer for errors)
     React.useEffect(() => {
-        fetchDocuments();
-    }, [onIngestSuccess]); // Re-fetch when parent signals success (or just on mount)
+        if (status) {
+            const delay = status.type === 'error' ? 5000 : 3000;
+            const timer = setTimeout(() => setStatus(null), delay);
+            return () => clearTimeout(timer);
+        }
+    }, [status]);
+
+    // Clear status on domain/bot change
+    React.useEffect(() => {
+        setStatus(null);
+    }, [botId, hostname]);
 
     const handleUrlSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!url) return;
+
+        // Check for multiple URLs
+        const trimmedUrl = url.trim();
+        if (trimmedUrl.includes(' ') || trimmedUrl.includes(',') || trimmedUrl.includes('\n')) {
+            setStatus({
+                type: 'error',
+                message: 'Please enter only one URL at a time'
+            });
+            return;
+        }
+
+        // Basic URL validation
+        const urlPattern = /^(https?:\/\/)([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(:\d+)?(\/.*)?$/;
+        if (!urlPattern.test(trimmedUrl)) {
+            setStatus({
+                type: 'error',
+                message: 'Please enter a valid URL (e.g., https://example.com)'
+            });
+            return;
+        }
+
         setIsLoading(true);
         setStatus(null);
         try {
-            await axios.post('http://localhost:8000/api/v1/ingest/url', { url });
+            await axios.post('/api/v1/ingest/url', {
+                url: trimmedUrl,
+                botId,
+                hostname
+            });
             setStatus({ type: 'success', message: 'URL trained successfully!' });
             setUrl('');
-            onIngestSuccess();
+            try {
+                onIngestSuccess();
+            } catch (callbackError) {
+                console.error('Error in onIngestSuccess callback:', callbackError);
+            }
         } catch (error: any) {
-            console.error(error);
-            const msg = error.response?.data?.detail || 'Failed to ingest URL.';
+            console.error('URL ingestion error:', error);
+            let msg = 'Failed to ingest URL.';
+
+            if (error.response?.data?.detail) {
+                msg = error.response.data.detail;
+            } else if (error.response?.status === 404) {
+                msg = 'Domain not found. Please check your configuration.';
+            } else if (error.response?.status === 500) {
+                msg = 'Server error. The URL might be invalid or unreachable.';
+            } else if (error.message) {
+                msg = error.message;
+            } else if (error.code === 'ERR_NETWORK') {
+                msg = 'Network error. Please check your connection and try again.';
+            }
+
             setStatus({ type: 'error', message: msg });
         } finally {
             setIsLoading(false);
@@ -55,16 +107,31 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
         setStatus(null);
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('botId', botId);
+        formData.append('hostname', hostname);
 
         try {
-            await axios.post('http://localhost:8000/api/v1/ingest/file', formData, {
+            await axios.post('/api/v1/ingest/file', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
             setStatus({ type: 'success', message: `File ${file.name} trained successfully!` });
-            onIngestSuccess();
+            try {
+                onIngestSuccess();
+            } catch (callbackError) {
+                console.error('Error in onIngestSuccess callback:', callbackError);
+            }
         } catch (error: any) {
             console.error(error);
-            const msg = error.response?.data?.detail || 'Failed to ingest file.';
+            let msg = 'Failed to ingest file.';
+
+            if (error.response?.data?.detail) {
+                msg = error.response.data.detail;
+            } else if (error.message) {
+                msg = error.message;
+            } else if (error.code === 'ERR_NETWORK') {
+                msg = 'Network error. Please check your connection and try again.';
+            }
+
             setStatus({ type: 'error', message: msg });
         } finally {
             setIsLoading(false);
@@ -105,7 +172,7 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
                     </form>
                 </div>*/}
 
-                <div className="border rounded-xl p-5 mb-6">
+                <form onSubmit={handleUrlSubmit} className="border rounded-xl p-5 mb-6">
                     <p className="text-sm font-medium text-slate-700 mb-2">
                         Add website URL
                     </p>
@@ -114,18 +181,21 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
                             type="text"
                             placeholder="https://example.com"
                             value={url}
-                            onChange={(e) => setUrl(e.target.value)}
+                            onChange={(e) => {
+                                setUrl(e.target.value);
+                                setStatus(null);
+                            }}
                             className="flex-1 px-4 py-2 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                         />
                         <button type="submit"
-                            disabled={isLoading || !url} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">
+                            disabled={isLoading || !url} className="px-4 py-2 bg-blue-600 rounded-xl text-sm">
                             {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <p>Add</p>}
                         </button>
                     </div>
                     <p className="text-xs text-slate-500 mt-2">
                         We’ll automatically crawl and extract content.
                     </p>
-                </div>
+                </form>
 
                 {/* Files Card */}
                 <div className="border-2 border-dashed rounded-xl p-6 text-center mb-2 hover:border-blue-500 transition">
@@ -133,10 +203,13 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
                         <FileText className="w-5 h-5 text-blue-600" />
                     </div>*/}
                     <h3 className="font-semibold text-slate-900">Files</h3>
-                    <p className="text-sm text-slate-500 mb-4">Upload PDF or Text files for training.</p>
+                    <p className="text-sm text-slate-500 mb-4">Upload PDF or Text files for bot training.</p>
 
                     <button
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() => {
+                            setStatus(null);
+                            fileInputRef.current?.click();
+                        }}
                         disabled={isLoading}
                         className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"
                     >
@@ -178,60 +251,7 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ onIngestSuccess }) => {
                 )}
             </AnimatePresence>
 
-            {/* List of Sources */}
-            <div className="border-t border-slate-200 pt-6">
-                <h4 className="text-sm font-medium text-slate-900 mb-3">Active Sources</h4>
 
-                {documents.length === 0 ? (
-                    <div className="bg-slate-50 rounded-lg border border-slate-200 p-8 text-center text-slate-500 text-sm">
-                        <Database className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                        <p>No sources added yet.</p>
-                    </div>
-                ) : (
-                    <div className="space-y-6">
-                        {/* Websites Section */}
-                        {documents.some(d => d.type === 'url') && (
-                            <div className="space-y-2">
-                                <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Websites</h5>
-                                {documents.filter(d => d.type === 'url').map((doc, idx) => (
-                                    <div key={idx} className="flex items-center gap-3 p-2 bg-white border border-slate-200 rounded-lg hover:border-primary/50 transition-colors">
-                                        <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center flex-shrink-0">
-                                            <Globe className="w-4 h-4 text-primary" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-slate-900 truncate" title={doc.source}>
-                                                {doc.source}
-                                            </p>
-                                        </div>
-                                        <CheckCircle className="w-4 h-4 text-green-500" />
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {/* Files Section */}
-                        {documents.some(d => d.type !== 'url') && (
-                            <div className="space-y-2">
-                                <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Files</h5>
-                                {documents.filter(d => d.type !== 'url').map((doc, idx) => (
-                                    <div key={idx} className="flex items-center gap-3 p-2 bg-white border border-slate-200 rounded-lg hover:border-primary/50 transition-colors">
-                                        <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center flex-shrink-0">
-                                            <FileText className="w-4 h-4 text-blue-600" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-slate-900 truncate" title={doc.source}>
-                                                {doc.source}
-                                            </p>
-                                            <p className="text-xs text-slate-500 capitalize">{doc.type}</p>
-                                        </div>
-                                        <CheckCircle className="w-4 h-4 text-green-500" />
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
         </div>
 
 

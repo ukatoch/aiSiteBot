@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { Send, MoreVertical, MessageSquare, Loader2, User, Bot, Database } from 'lucide-react';
+import { Send, RotateCcw, MessageSquare, Loader2, User, Bot } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Message {
@@ -9,27 +9,36 @@ interface Message {
     sources?: string[];
 }
 
-interface ChatInterfaceProps {
-    onManageSources: () => void;
-}
+interface ChatInterfaceProps { }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = () => {
     const [query, setQuery] = useState('');
+    const [userEmail, setUserEmail] = useState<string | null>(localStorage.getItem('chat_user_email'));
+    const [showEmailPrompt, setShowEmailPrompt] = useState(!localStorage.getItem('chat_user_email'));
     const [messages, setMessages] = useState<Message[]>([
         {
             role: 'assistant',
-            content: '👋 Hi, I’m the AISiteGPT Assistant — built with AISiteGPT itself.'
+            content: localStorage.getItem('chat_user_email')
+                ? '👋 Hi, I’m the AISiteGPT Assistant. How can I help you today?'
+                : '👋 Hi, I’m the AISiteGPT Assistant. Please enter your email to start chatting.'
         }
     ]);
     const [isLoading, setIsLoading] = useState(false);
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [sessionId, setSessionId] = useState<string | null>(null);
+    const [emailInput, setEmailInput] = useState('');
+    const [emailError, setEmailError] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Get bot configuration from URL if available (for embedded mode)
+    const searchParams = new URLSearchParams(window.location.search);
+    const botId = searchParams.get('botId') || 'bot-default';
+    const parentHostname = searchParams.get('hostname') || window.location.hostname;
 
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
         }
-    }, [messages, isLoading]);
+    }, [messages, isLoading, showEmailPrompt]);
 
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -41,7 +50,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
         setIsLoading(true);
 
         try {
-            const response = await axios.post('http://localhost:8000/api/v1/chat', { query: userMessage.content });
+            const response = await axios.post('/api/v1/chat', {
+                question: userMessage.content,
+                botId: botId,
+                hostname: parentHostname,
+                sessionId: sessionId,
+                userEmail: userEmail
+            });
+
+            if (response.data.sessionId) {
+                setSessionId(response.data.sessionId);
+            }
+
             const botMessage = {
                 role: 'assistant' as const,
                 content: response.data.answer,
@@ -50,11 +70,47 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
             setMessages(prev => [...prev, botMessage]);
         } catch (error) {
             console.error(error);
-            const errorMessage = { role: 'assistant' as const, content: 'Sorry, I ran into an issue. Please try again.' };
+            const errorMessage = {
+                role: 'assistant' as const,
+                content: 'Sorry, I ran into an issue. Please try again.'
+            };
             setMessages(prev => [...prev, errorMessage]);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleEmailSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailInput.trim() || !emailRegex.test(emailInput)) {
+            setEmailError('Please enter a valid email address.');
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: 'try again with valid email'
+            }]);
+            return;
+        }
+
+        setEmailError(null);
+        setUserEmail(emailInput);
+        localStorage.setItem('chat_user_email', emailInput);
+        setShowEmailPrompt(false);
+
+        // Add success message from bot
+        setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: 'thanks for your information'
+        }]);
+
+        // Initialize session on identification if query exists or just to link
+        // This keeps the flow clean.
+    };
+
+    const handleRestart = () => {
+        // Keep initial welcome message
+        setMessages([messages[0]]);
+        setSessionId(null);
     };
 
     return (
@@ -62,53 +118,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
 
             {/* .chat-header */}
             <div className="flex items-center gap-3 p-[14px_16px] border-b border-[#e5e7eb] flex-shrink-0 relative z-10">
-                <div className="w-[36px] h-[36px] bg-primary rounded-full flex items-center justify-center text-white font-bold">
+                <div className="w-[36px] h-[36px] bg-primary rounded-full flex items-center justify-center font-bold">
                     <MessageSquare className="w-5 h-5 fill-current" />
                 </div>
                 <div className="font-semibold text-slate-800 flex-1">
                     AISiteGPT Assistant
                 </div>
-                <div className="relative">
-                    <button
-                        onClick={() => setIsMenuOpen(!isMenuOpen)}
-                        className="text-[#64748b] hover:bg-slate-100 p-1.5 rounded-full transition-colors"
-                    >
-                        <MoreVertical className="w-5 h-5" />
-                    </button>
-
-                    <AnimatePresence>
-                        {isMenuOpen && (
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                                className="absolute top-full mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-100 py-1 z-50 origin-top-right"
-                                style={{ right: 0, marginRight: '8px' }}
-                            >
-                                <button
-                                    onClick={() => {
-                                        onManageSources();
-                                        setIsMenuOpen(false);
-                                    }}
-                                    className="w-full text-left px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 font-medium flex items-center gap-2 border-b border-slate-50"
-                                >
-                                    <Database className="w-4 h-4" />
-                                    Data Sources
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setMessages([messages[0]]); // Keep only welcome message
-                                        setIsMenuOpen(false);
-                                    }}
-                                    className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 font-medium flex items-center gap-2"
-                                >
-                                    <MessageSquare className="w-4 h-4" />
-                                    Restart Chat
-                                </button>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </div>
+                <button
+                    onClick={handleRestart}
+                    title="Restart Chat"
+                    className="text-[#64748b] hover:bg-slate-100 p-2 rounded-lg transition-all flex items-center gap-2 text-xs font-medium"
+                >
+                    <RotateCcw className="w-4 h-4" />
+                </button>
             </div>
 
             {/* .messages */}
@@ -181,6 +203,55 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
                         </div>
                     </div>
                 )}
+
+                <AnimatePresence>
+                    {showEmailPrompt && (
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="bg-slate-50 border border-slate-200 rounded-2xl p-5 mx-2 my-2 shadow-sm relative overflow-hidden group"
+                        >
+                            <h4 className="text-slate-800 font-bold text-sm mb-1.5 flex items-center gap-2">
+                                <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                                Please identify yourself
+                            </h4>
+                            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                                Enter your email to save this conversation and receive follow-up notes from our team.
+                            </p>
+                            <form onSubmit={handleEmailSubmit} className="flex flex-col gap-2">
+                                <div className="flex gap-2">
+                                    <input
+                                        type="email"
+                                        required
+                                        placeholder="your@email.com"
+                                        value={emailInput}
+                                        onChange={(e) => {
+                                            setEmailInput(e.target.value);
+                                            if (emailError) setEmailError(null);
+                                        }}
+                                        className={`flex-1 bg-white border rounded-lg px-3 py-2 text-sm outline-none transition-all ${emailError ? 'border-red-500 ring-1 ring-red-100' : 'border-slate-200 focus:ring-2 focus:ring-primary/20 focus:border-primary'
+                                            }`}
+                                    />
+                                    <button
+                                        type="submit"
+                                        className="bg-primary p-2 rounded-lg hover:bg-primary/90 transition-colors shadow-sm"
+                                    >
+                                        <Send className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                {emailError && (
+                                    <motion.p
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="text-[11px] text-red-500 font-medium px-1"
+                                    >
+                                        {emailError}
+                                    </motion.p>
+                                )}
+                            </form>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
 
             {/* .chat-input */}
@@ -188,16 +259,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onManageSources }) => {
                 <form onSubmit={handleSend} className="flex-1 flex gap-2">
                     <input
                         type="text"
-                        placeholder="Ask me anything about AISiteGPT..."
+                        placeholder={showEmailPrompt ? "Please provide your email above..." : "Ask me anything about AISiteGPT..."}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        disabled={isLoading}
-                        className="flex-1 p-[12px_14px] rounded-[12px] border border-[#e5e7eb] outline-none text-[14px] focus:border-primary transition-colors"
+                        disabled={isLoading || showEmailPrompt}
+                        className="flex-1 p-[12px_14px] rounded-[12px] border border-[#e5e7eb] outline-none text-[14px] focus:border-primary transition-colors disabled:bg-slate-50 disabled:cursor-not-allowed"
                     />
                     <button
                         type="submit"
-                        disabled={!query.trim() || isLoading}
-                        className="w-[42px] h-[42px] bg-primary border-none text-white rounded-[12px] cursor-pointer flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        disabled={!query.trim() || isLoading || showEmailPrompt}
+                        className="w-[42px] h-[42px] bg-primary border-none rounded-[12px] cursor-pointer flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-50"
                     >
                         <Send className="w-4 h-4 fill-current" />
                     </button>
